@@ -1,0 +1,159 @@
+import MetaTrader5 as mt
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import time
+import schedule
+
+
+from sklearn.metrics import accuracy_score
+
+# To plot
+import matplotlib.pyplot as plt
+plt.style.use('seaborn-darkgrid')
+# To ignore warnings
+import warnings
+warnings.filterwarnings("ignore")
+
+
+
+def job():
+    mt.initialize()
+    login =
+    password= ''
+    server= 'ForexTimeFXTM-Demo01'
+    mt.login(login, password, server)
+    print(mt.account_info())
+    
+def shutdown():
+    mt.shutdown()
+    
+def job1():
+    eurusd_rates = mt.copy_rates_from("EURUSD", mt.TIMEFRAME_M5, datetime(2030,4,30), 100)
+    Df = pd.DataFrame(eurusd_rates)
+    # convert time in seconds into the datetime format
+    Df['time']=pd.to_datetime(Df['time'], unit='s')
+    print(Df.tail())
+
+    Df['open-close'] = Df.open - Df.close
+    Df['high-low'] = Df.high - Df.low
+
+    # Store all predictor variables in a variable X
+    X = Df[['open-close', 'high-low']]
+    X.head()
+    y = np.where(Df['close'].shift(-1) > Df['close'], 1, 0)
+    
+
+
+    from sklearn.svm import SVC
+    from sklearn.model_selection import train_test_split
+
+    X_train, X_test, y_train, y_test = train_test_split(X,y, test_size=0.3, random_state=43)
+    cls = SVC().fit(X_train, y_train)
+    accuracy_train = accuracy_score(y_train, cls.predict(X_train))
+    accuracy_test = accuracy_score(y_test, cls.predict(X_test))
+
+    print('\nTrain Accuracy:{: .2f}%'.format(accuracy_train*100))
+    print('Test Accuracy:{: .2f}%'.format(accuracy_test*100))
+
+    Df['Predicted_Signal'] = cls.predict(X)
+
+    # Calculate daily returns
+    Df['Return'] = Df.close.pct_change()
+
+    # Calculate strategy returns
+    Df['Strategy_Return'] = Df.Return * Df.Predicted_Signal.shift(1)
+
+    # Calculate geometric returns
+    geometric_returns = (Df.Strategy_Return.iloc[700:]+1).cumprod()
+
+    # Plot geometric returns
+    geometric_returns.plot(figsize=(10, 7),color='g')
+    plt.ylabel("Strategy Returns (%)")
+    plt.xlabel('Date')
+    plt.show()
+    
+    print(Df)
+    
+
+    positions = mt.positions_total()
+    balance = mt.account_info().balance
+    Predicted_Signal = Df['Predicted_Signal'].tail(1).item()
+    print(Predicted_Signal)
+    lot= round((balance * 0.01)/100,2)
+    deviation = 20
+    
+    if (Predicted_Signal==0) and (accuracy_test > 0.40) and (positions < 2):
+        # For Selling
+        symbol = "EURUSD"
+        point = mt.symbol_info(symbol).point
+        price = mt.symbol_info_tick(symbol).bid
+        deviation = deviation
+        request1 = {
+            "action": mt.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": lot,
+            "type": mt.ORDER_TYPE_SELL,
+            "price": price,
+            "sl": price - 40 * point,
+            "tp": price + 40 * point,
+            "deviation": deviation,
+            "magic": 22222,
+            "comment": "python script open",
+            "type_time": mt.ORDER_TIME_GTC,
+            "type_filling": mt.ORDER_FILLING_FOK,
+            }
+    
+        # send a trading request
+        mt.order_send(request1)
+        
+    if (Predicted_Signal==1) and (accuracy_test > 0.40) and (positions < 2):
+        # For Buying 
+        symbol = "EURUSD"
+        point = mt.symbol_info(symbol).point
+        price = mt.symbol_info_tick(symbol).ask
+       
+    
+        request = {
+            "action": mt.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": lot,
+            "type": mt.ORDER_TYPE_BUY,
+            "price": price,
+            "sl": price - 40 * point,
+            "tp": price + 40 * point,
+            "deviation": deviation,
+            "magic": 111111,
+            "comment": "python script open",
+            "type_time": mt.ORDER_TIME_GTC,
+            "type_filling": mt.ORDER_FILLING_FOK,
+        }
+        # send a trading request
+        mt.order_send(request) 
+
+    
+
+
+        
+job()
+job1()
+#schedule.every(5).minutes.do(job)
+#schedule.every(5).minutes.do(job1)
+
+
+#schedule.every().minute.at(":15").do(job)
+#schedule.every().minute.at(":15").do(job1)
+
+
+#schedule.every().minute.at(":30").do(job)
+#schedule.every().minute.at(":30").do(job1)
+
+
+#schedule.every().minute.at(":45").do(job)
+#schedule.every().minute.at(":45").do(job1)
+
+
+#schedule.every().day.at("21:30").do(shutdown)
+while True:
+    schedule.run_pending()
+    time.sleep(14)
